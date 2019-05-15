@@ -1,3 +1,5 @@
+import datetime
+
 from django import forms
 from django.db import models
 
@@ -6,20 +8,49 @@ from modelcluster.tags import ClusterTaggableManager
 
 from taggit.models import TaggedItemBase, Tag as TaggitTag
 
+from wagtail.contrib.routable_page.models import RoutablePageMixin, route
 from wagtail.core.models import Page
 from wagtail.admin.edit_handlers import FieldPanel
 from wagtail.core.fields import RichTextField
 from wagtail.snippets.models import register_snippet
 
-class BlogPage(Page):
+class BlogPage(RoutablePageMixin, Page):
     description = models.CharField(max_length=255, blank=True,)
 
     content_panels = Page.content_panels + [
         FieldPanel("description", classname = "full")
     ]
 
+    def get_context(self, request, *args, **kargs):
+        context = super(BlogPage, self).get_context(request, *args, **kargs)
+        context['posts'] = self.posts
+        context['blog_page'] = self
+        return context
+    
+    def get_posts(self):
+        return PostPage.objects.descendant_of(self).live()
+
+    @route(r'^tag/(?P<tag>[-\w]+)/$') 
+    def post_by_tag(self, request, tag, *args, **kargs):
+        self.search_type = "tag"
+        self.search_term = tag
+        self.posts = self.get_posts().filter(tags__slug=tag)
+        return Page.serve(self, request, *args, **kargs)
+ 
+    @route(r'^category/(?P<category>[-\w]+)/$')
+    def post_by_category(self, request, category, *args, **kargs):
+        self.search_type = "category"
+        self.search_term = category
+        self.posts = self.get_posts().filter(categories__slug=category)
+        return Page.serve(self, request, *args, **kargs)
+
+    @route(r'^$')
+    def post_list(self, request, *args, **kargs):
+        self.posts = self.get_posts()
+        return Page.serve(self, request, *args, **kargs)
 class PostPage(Page):
     body = RichTextField(blank=True)
+    date = models.DateTimeField(verbose_name="Post date", default=datetime.datetime.today)
     categories = ParentalManyToManyField("blog.BlogCategory", blank=True)
     tags = ClusterTaggableManager(through="blog.BlogPageTag", blank=True)
 
@@ -28,6 +59,21 @@ class PostPage(Page):
         FieldPanel("categories", widget=forms.CheckboxSelectMultiple),
         FieldPanel("tags"),
     ]
+
+    settings_panels = Page.settings_panels + [
+        FieldPanel("date"),
+    ]
+
+    @property
+    def blog_page(self):
+        return self.get_parent().specific
+
+    def get_context(self, request, *args, **kargs):
+        context = super(PostPage, self).get_context(request, *args, **kargs)
+        context['blog_page'] = self.blog_page
+        context['post'] = self
+        return context
+
 class BlogPageTag(TaggedItemBase):
     content_object = ParentalKey('PostPage', related_name = "post_tags")
 

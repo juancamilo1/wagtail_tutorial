@@ -1,7 +1,12 @@
 import datetime
 
+from datetime import date
+
 from django import forms
 from django.db import models
+from django.http import Http404, HttpResponse
+from django.utils.dateformat import DateFormat
+from django.utils.formats import date_format
 
 from modelcluster.fields import ParentalKey, ParentalManyToManyField
 from modelcluster.tags import ClusterTaggableManager
@@ -28,7 +33,28 @@ class BlogPage(RoutablePageMixin, Page):
         return context
     
     def get_posts(self):
-        return PostPage.objects.descendant_of(self).live()
+        return PostPage.objects.descendant_of(self).live().order_by("-date")
+
+    @route(r'^(d{4})/$')
+    @route(r'^(\d{4})/(\d{2})/$')
+    @route(r'^(\d{4})/(\d{2})/(\d{2})/$')
+    def post_by_date(self, request, year, month=None, day=None, *args, **kargs):
+        self.posts = self.get_posts().filter(date__year=year)
+        if month:
+            self.posts = self.posts.filter(date__month=month)
+            df = DateFormat(date(int(year), int(month), 1))
+            self.search_term = df.format("F Y")
+        if day:
+            self.posts = self.posts.filter(date__day=day)
+            self.search_term = date_format(date(int(year), int(month), int(day)))        
+        return Page.serve(self, request, *args, **kargs) 
+
+    @route(r'^(\d{4})/(\d{2})/(\d{2})/(.+)/$')
+    def post_by_date_slug(self, request, year, month, day, slug, *args, **kargs):
+        post_page = self.get_posts().filter(slug=slug).first()
+        if not post_page:
+            raise Http404
+        return Page.serve(post_page, request, *args, **kargs)
 
     @route(r'^tag/(?P<tag>[-\w]+)/$') 
     def post_by_tag(self, request, tag, *args, **kargs):
